@@ -1,0 +1,73 @@
+*------------------------------------------------------------------------------*
+VSBW   DATA VDPWS,$+>0002
+       BL   @VWAUB       Set the VDP write address and get the calling code's
+*                        R1 into local R1.
+       MOVB R1,*R3       Move the byte in R1 into the VDP Write Data Register.
+       RTWP              RETURN to the calling code.
+ 
+*------------------------------------------------------------------------------*
+VMBW   DATA VDPWS,$+>0002
+       BL   @VWAUB       Set the VDP write address and get the calling code's
+*                        R1 into local R1.
+       MOV  @>0004(R13),R2  Get the calling code's R2 into local R2.
+ 
+VMBW1  MOVB *R1+,*R3     Move the byte pointed to by R1 into the VDP Write
+*                        Data Register, then increment R1 by 1.
+       DEC  R2           Decrement R2 by 1.
+       JNE  VMBW1        Is R2 zero?  If not, go back and keep processing.
+       RTWP              OTHERWISE, return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+VSBR   DATA VDPWS,$+>0002
+       BL   @VRAUB       Set the VDP read address and get the calling code's R1
+*                        local R1.
+       MOVB *R3,@>0002(R13)  Move the byte in the VDP Read Data Register into
+*                            the calling code's R1.
+       RTWP              RETURN to the calling code.
+ 
+*------------------------------------------------------------------------------*
+VMBR   DATA VDPWS,$+>0002
+       BL   @VRAUB       Set the VDP read address and get the calling code's R1
+*                        local R1.
+       MOV  @>0004(R13),R2  Get the calling code's R2 into local R2.
+ 
+VMBR1  MOVB *R3,*R1+     Move the byte in the VDP Read Data Register into
+*                        the byte pointed to by R1, then increment R1 by 1.
+       DEC  R2           Decrement R2 by 1.
+       JNE  VMBR1        Is R2 zero?  If not, go back and keep processing.
+       RTWP              OTHERWISE, return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+VWTR   DATA VDPWS,$+>0002
+       MOVB *R13,R0      Get the calling code's R0 into local R0.
+       MOVB @>0001(R13),@VDPWA  Move the LSBy of the calling code's R0 into the
+*                               VDP Write Address Register
+       ORI  R0,>8000     OR R0 by >8000 to make it a VDP write--only register.
+       MOVB R0,@VDPWA    Move the MSBy into the VDP Write Address Register.
+       RTWP              Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+VWAUB  LI   R2,>4000     The address will need to be SOC'd by >4000 for a write
+*                        to the VDP.
+       LI   R3,VDPWD     Load R3 with the VDP Write Data Register address for
+*                        faster access.
+       JMP  VAUB         Jump to the common code.
+ 
+VRAUB  CLR  R2           The address needs nothing extra for a read from the
+*                        VDP.
+       LI   R3,VDPRD     Load R3 with the VDP Read Data Register address for
+*                        faster access.
+ 
+VAUB   MOV  *R13,R0      Get the calling code's R0 into local R0.
+       MOV  R0,R1        Save the unmodified R0 in R1.
+* Comment out the next 8 source code lines for 40 column operation.
+       ANDI R1,>3FFF     Mask out the bank select bits in R1.
+       SRL  R0,>06       Shift R0 to the right 6 bits.
+       ANDI R0,>0300     Keep the bank select address.
+       AB   @BANKAD,R0   Add in the extra bank select byte (for 192K).
+       MOVB R0,@VDPWA    Send it to the VDP Write Address Register.
+       LI   R0,>8E00     Put >8E in the MSBy of R0.  This is the bank select.
+*                        (VDP register 14.)
+       MOVB R0,@VDPWA    Send it to the VDP Write Address Register.
+       SOC  R2,R1        Mask in a possible write bit.
+       MOVB @VDPWS+>0003,@VDPWA  Send it to the VDP Write Address Register.

@@ -1,0 +1,363 @@
+*------------------------------------------------------------------------------*
+CR     DATA CREG,$+>0002
+       MOVB @CDET,@CDET  Should we do a carrier detect?
+       JNE  CRSTA1       No, skip it.
+       LI   R12,>1380    Otherwise, do a carrier detect. (pin 19, port 2)
+       TB   >1C          NOTE: This works with the TI RS232 only!
+       JNE  DOFLAG       The carrier has been dropped!
+CRSTA1 A    @TIMER,@TIMER1  Add the interrupt timer to the "no key pressed"
+*                           timer.
+       A    @TIMER,@TIMER2  Add the interrupt timer to the "minute" timer
+       A    @TIMER,@TIMER3  Add the interrupt timer to the generic timer.
+       CLR  @TIMER       Reset the interrupt timer.
+       C    @TIMER2,@F3600  Has a minute passed?
+       JLT  CRK1         No, don't worry about it.
+       MOV  @TIME,R0     Has the user's time expired?
+       JEQ  CRSTA3       Yes, see if they need to be logged off.
+       DEC  @TIME        Otherwise, subtract 1 minute from their time left.
+CRSTA2 S    @F3600,@TIMER2  Subtract a minute off of the minute timer...
+       JMP  CRK1         ...and now go check for keys.
+CRSTA3 MOVB @TK,@TK      Is the user timeOut flag enabled?
+       JNE  CRSTA4       No, let them stay online.
+ 
+DOFLAG MOVB @FF,@FLAG    Set the hangup the user flag.
+       B    @BASIC       Return to BASIC.
+ 
+CRSTA4 MOV  @ONE,@TIME   Give the user one minute so that the timeOut doesn't
+*                        get called constantly.
+ 
+CRK1   BLWP @GETKEY      Get an ASCII keypress value from the keyboard.
+       CB   R1,@FF       Same key as last time or no key at all?
+       JNE  CRK1A        No, don't worry about it.
+       B    @CRK9        Otherwise, don't process it and go check the modem
+*                        instead.
+ 
+CRK1A  CB   R1,@B128     Is this a special control key?
+       JGT  CRK1B        Yes, process it as such.
+       B    @GOTUN       Otherwise, process it as a normal keypress.
+ 
+CRK1B  CB   R1,@CHATK    Did the sysOp press the chat with user key?
+       JNE  CRK3         No, skip to the next key check.
+       CI   R14,CHATRT   Are we coming into chat or going out of chat?
+       JNE  CRK2         We must be going into chat, skip this part.
+       LI   R0,M39       Load R0 with the exit chat message.
+       LI   R2,>0028     It is 40 characters long.
+       BL   @STRING      Send the string to the modem/screen.
+       MOVB @CASE+>0001,@CASE  Restore the saved upper case only flag status.
+       MOV  @S4,R13      Restore the saved R13.
+       MOV  @S5,R14      Restore the saved R14.
+DOACR  LI   R1,>0D00     Let's press ENTER so the user knows the BBS is still
+*                        alive.
+       B    @GOTUN       Go process that ENTER key.
+ 
+CRK2   MOV  R13,@S4      Save R13 since it will be altered.
+       MOV  R14,@S5      Save R14 since it will be altered.
+       MOVB @CASE,@CASE+>0001  Save the upper case only flag status.
+       MOVB @ZERO,@CASE  Allow for both upper and lower case while in chat.
+       LI   R0,M38       Load R0 with the enter chat message.
+       LI   R2,>0028     It is 40 characters long.
+       BL   @STRING      Send the string to the modem/screen.
+CHAT3  BLWP @CR          Get a character from the modem/keyboard.
+CHATRT BL   @VALID       Is this a valid character?
+       JNE  CHAT3        No, keep checking.
+       BLWP @WR          Otherwise, send it out to the modem/screen.
+       CB   R1,@ENTER    Is it the ENTER key?
+       JNE  CHAT3        No, go back and continue processing.
+       LI   R1,>0A00     Otherwise, load R1 with the code for a linefeed and
+       BLWP @WR          send it out to the modem/screen.
+       JMP  CHAT3        Then go back and continue processing.
+ 
+CRK3   CB   R1,@HANGK    Did the sysOp press the hangup the user key?
+       JEQ  DOFLAG       Yes, go hang the user up.
+ 
+       CB   R1,@TIMEK    Did the sysOp press the give the user more time key?
+       JNE  CRK7         No, skip to the next key check.
+       BL   @CRLF        Send a carriage return/line feed to the modem/screen.
+       LI   R1,'T>'      Load R1 with the change time prompt.
+       BLWP @WR          Send the first byte out to the modem/screen.
+       SWPB R1           Swap the bytes in R1 so the second byte is in the
+*                        MSBy of R1.
+       BLWP @WR          Send the second byte out to the modem/screen.
+CRK4A  BLWP @GETKEY      Get a key from the keyboard.
+       CB   R1,@B81      Is it a 'Q'?
+       JEQ  DOACR        Simulate an ENTER from the modem/keyboard and quit.
+       CB   R1,@B48      Compare the character with '0'.
+       JLT  CRK4A        If it's less than that, go back for another key.
+       CB   R1,@B57      Compare the character with '9'.
+       JGT  CRK4A        If it's greater than that, go back for another key.
+       BLWP @WR          Otherwise, send the character to the modem/screen.
+       BL   @CRLF        Send a carriage return/line feed to the modem/screen.
+       SB   @B48,R1      Subtract >30 from the character so it is a normal
+*                        number instead of ASCII.
+       SRL  R1,>07       Move it into the LSBy of R1 and multiply it by 2 for
+*                        a word offset.
+       MOV  @TLIST(R1),@TIME  Get the time value indexed wordwise by R1 into
+*                             user's time limit.
+       JMP  DOACR        Simulate an ENTER from the modem/keyboard and quit.
+ 
+*CRK5   CB   R1,@TERMK    Did the sysOp press the terminal mode toggle key?
+*       JNE  CRK7         No, skip to the next key check.
+*       B    @TERM        Otherwise, switch into terminal mode.
+ 
+CRK7   CB   R1,@AXESS    Did the sysOp press the change user access key?
+       JNE  CRK7#1       No, skip to the next key check.
+       BL   @CRLF        Send a carriage return/line feed to the modem/screen.
+       LI   R1,'#>'      Load R1 with the prompt of which digit to change.
+       BLWP @WR          Send the first byte out to the modem/screen.
+       SWPB R1           Swap the bytes in R1 so the second byte is in the
+*                        MSBy of R1.
+       BLWP @WR          Send the second byte out to the modem/screen.
+CRK7A  BLWP @GETKEY      Get a key from the keyboard.
+       CB   R1,@B81      Is it a 'Q'?
+       JEQ  DOACR        Simulate an ENTER from the modem/keyboard and quit.
+       CB   R1,@B48      Compare the character with '0'.
+       JLT  CRK7A        If it's less than that, go back for another key.
+       CB   R1,@B57      Compare the character with '9'.
+       JGT  CRK7A        If it's greater than that, go back for another key.
+       BLWP @WR          Otherwise, send the character to the modem/screen.
+       SB   @B48,R1      Subtract >30 from the character so it is a normal
+*                        number instead of ASCII.
+       SRL  R1,>08       Move the character into the LSBy of R1.
+       AI   R1,ACCESS    Add to R1, the address of the access levels so that R1
+*                        points at the correct digit to change.
+       MOV  R1,R0        Copy it to R0 for later usage.
+       LI   R1,'  '      Load R1 with a space.
+       BLWP @WR          Send it out to modem/screen.
+       LI   R1,'A>'      Load R0 with the prompt of what to change the digit
+*                        to.
+       BLWP @WR          Send the first byte out to the modem/screen.
+       SWPB R1           Swap the bytes in R1 so the second byte is in the
+*                        MSBy of R1.
+       BLWP @WR          Send the second byte out to the modem/screen.
+CRK7B  BLWP @GETKEY      Get a second key from the keyboard.
+       CB   R1,@B81      Is it a 'Q'?
+       JEQ  DOACR        Simulate an ENTER from the modem/keyboard.
+       CB   R1,@B48      Compare the character with '0'.
+       JLT  CRK7B        If it's less than that, go back for another key.
+       CB   R1,@B52      Compare the character with '4'.
+       JGT  CRK7B        If it's greather than that, go back for another key.
+       BLWP @WR          Otherwise, send the character to the modem/screen.
+       SB   @B48,R1      Subtract >30 from the character so it is a normal
+*                        number instead of ASCII.
+       MOVB R1,*R0       Move the number into the access level address, giving
+*                        the user that access at that digit.
+       BL   @CRLF        Send a carriage return/linefeed to the modem/screen.
+       B    @DOACR       Simulate an ENTER from the modem/keyboard.
+ 
+CRK7#1 CB   R1,@STATK    Did the sysop press the user status on screen key?
+       JNE  CRK8         No, skip to the next key check.
+       LI   R0,>0000+SCROFS  Load R0 with screen location >0000.
+       LI   R1,SPACE      Load R1 with the code for a space.
+* Comment out the next line for 40 column operation.
+       MOVB @BANK2,@BANKAD  Select VDP bank 2 in BANKAD.
+       BLWP @VSBW        Send one blank to the screen.  (The call to VSBW puts
+*                        the VDP into bank 2.)
+       INC  R0           Point R0 at the next screen position.
+STATL1 MOVB R1,@VDPWD    Put a space in that position.
+       INC  R0           Increment R0 by 1.
+       CI   R0,>0050+SCROFS  Have we reached the end of the first line?  (80)
+*       CI   R0,>0028+SCROFS  Have we reached the end of the first line?  (40)
+       JLT  STATL1       No, keep clearing this area.  Otherwise, we are
+*                        done with this part of the deed.
+ 
+       LI   R0,>0014+SCROFS  Place the data at location >0014 on the screen.
+       LI   R1,USRNAM+>0001  Point R1 at the address of the user data.
+       LI   R2,>0028     The length of the data is 40 characters long.
+       BLWP @VMBW        Send it to the screen.
+* Comment out the next three lines for 40 column operation.
+       MOVB @ZERO,@BANKAD  Select VDP bank 0 in BANKAD.
+       LI   R0,>0E00     Select VDP bank 0.
+       BLWP @VWTR        Make it so.
+       JMP  CRK9         Go check the modem for any characters.
+ 
+CRK8   ANDI R1,>7F00     Strip the most significant bit of the character.
+       BL   @VALID       Check to see if we have a valid key code.
+       JEQ  GOTUN        Yes, we have a valid key code.  Otherwise, check the
+*                        modem for valid key codes.
+ 
+CRK9   MOVB @RDENB,@RDENB  Is the read enable for the modem currently on?
+       JNE  NOCHU        No, skip it.
+       BLWP @CHUART      Otherwise, read a character into the buffer.
+NOCHU  BLWP @READM       Get a character from the buffer.
+       BL   @VALID       Check to see if we have a valid key code.
+       JEQ  GOTUN        Yes, we have a valid key code.
+       C    @TIMER1,@FXXX  Has the "no key pressed" timer elapsed?
+       JLT  RTWY         No, don't worry about it; return.
+       MOVB @TK,@TK      Otherwise, check if the timeOut is enabled.
+       JNE  RTWY         Is it?  No, skip it; return.
+       B    @DOFLAG      Otherwise, set the logoff flag for the user.
+ 
+GOTUN  ANDI R1,>7F00     Strip the most significant bit off of the character.
+       CLR  @TIMER1      Reset the "no key pressed" timer.
+       MOVB @CASE,R0     Is the case flag enabled? (upper case only?)
+       JEQ  RTWY         No, skip it.
+       CB   R1,@B96      Match with the character 'a'.
+       JLE  RTWY         If it is less than that, skip it.
+       CB   R1,@B122     Match with the character 'z'.
+       JGT  RTWY         If it is greater than that, skip it.
+       SB   @B32,R1      Otherwise, subtract >20 from the character.
+RTWY   MOVB R1,@>0002(R13)  Send the character to the MSBy of the calling
+*                           code's R0.
+       RTWP              Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+WR     DATA WREG,$+>0002
+       MOVB @>0002(R13),R1  Get the calling code's R1 into local R1.
+       ANDI R1,>7F00     Mask off the most significant bit.
+ 
+       MOVB @CASE,R0     Is the case flag enabled? (upper case only?)
+       JEQ  WR1          No, skip it.
+       CB   R1,@B97      Match with the character 'a'.
+       JLT  WR1          If it is less than that, skip it.
+       CB   R1,@B122     Match with the character 'z'.
+       JGT  WR1          If it is greater than that, skip it.
+       SB   @B32,R1      Take out >20 to make the character upper case.
+ 
+WR1    CB   R1,@CARET    Is it a caret (special character mode trigger)?
+       JNE  WR1Z         No, skip it.
+       MOVB @SPLCHR,R0   Are we in the special character mode?
+       JEQ  SP1          No, go switch into it.
+       MOVB @ZERO,@SPLCHR  Turn off the special mode.
+       JMP  DONEWR       Finished with this character; go to return.
+SP1    MOVB @ONE,@SPLCHR Turn on the special mode.
+       MOVB @ZERO,@WWRAP Turn off the word wrap while in the special mode.
+       JMP  DONEWR       Finished with this character; go to return.
+ 
+WR1Z   CB   R1,@ENTER    ENTER code?
+       JNE  WR1A         No, skip it.
+       MOVB @ZERO,@SPLCHR  Turn off the special character mode.
+ 
+WR1A   MOVB @SPLCHR,R0   Are we in the special character mode?
+       JEQ  WR1B         No, skip it.
+       CB   R1,@B65      Character 'A'?
+       JLT  WR1B         Less than, skip it.
+       CB   R1,@B91      Character 'Z'?
+       JGT  WR1B         Greater than, skip it.
+       SB   @B64,R1      Subtract >40 from the character.
+ 
+WR1B   MOVB @ECHO,R0     Is the one character echo enabled?
+       JEQ  WR2          No, skip it.
+       CB   R1,@B32      Echo the characters > 33 only.
+       JLE  WR2          Anything else gets sent for regular processing.
+       MOVB R0,R1        Get the one character to echo.
+ 
+WR2    MOVB @WRENB,R0    Is the modem write flag enabled?
+       JNE  WR3          No, skip it.
+       BLWP @WRITEA      Send the character to the modem.
+WR3    BLWP @CHROUT      Send the character to the screen.
+DONEWR RTWP              Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* Gets one key and returns value
+GETKEY DATA CHRREG,$+>0002
+       MOVB @FF,@>0002(R13)  Default a >FF in the calling code's R1.
+       MOVB @ZERO,@KEYBD  Use the last key scan code.
+ 
+       LWPI GPLWS        Load the GPL workspace registers.
+       LIMI >0001        Let in the interrupts for a moment...
+       LIMI >0000        ...then turn them back off.
+       BL   @SCAN        Scan the keyboard.
+       LWPI CHRREG       Load the local register workspace registers.
+ 
+       MOVB @KEYVAL,R3   Get ASCII value of key into R3.
+       CB   R3,@BREAKP   Is it FCTN-4?
+       JNE  GETKY1       No, skip it.
+       B    @BASIC       Return to BASIC A.S.A.P.
+ 
+GETKY1 CB   R3,R9        Is this key the last key pressed?
+       JEQ  GETKY2       Yes, don't return it and go to return.
+       MOV  R3,@>0002(R13)  Return the key to the calling code's R1.
+       MOVB R3,R9        Put this key into R9 for future checking.
+GETKY2 RTWP              RETURN to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* Read characters from the modem input buffer.
+READM  DATA RSREG,$+>0002
+       MOVB @FF,R2       Set the MSBy of R2 to >FF.
+       MOV  R5,R5        Are there any characters in the buffer?
+       JEQ  READM2       No, skip to return code.
+       MOVB *R6+,R2      Otherwise put a byte from the buffer into the MSBy of
+*                        R2 and increment R6 (pointing into the buffer) by 1.
+       CI   R6,BUF+BUFLEN  Are we at the end of the buffer?
+       JLT  READM1       No, skip over buffer circle code.
+       AI   R6,-BUFLEN   Bring the buffer back to its beginning.
+READM1 DEC  R5           Decement R5 (number of characters in the buffer) by 1.
+READM2 MOVB R2,@>0002(R13)  Send the character (or lack of one signified by >FF
+*                           to the MSBy of the calling code's R1.
+       RTWP              Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* Send a character out to the modem/screen.
+WRITEA DATA RSREG,$+>0002
+       BL   @LITEON      Turn on the RS232 LED.
+       AI   R12,>0040    Select port 1.
+       SBO  RTSON        Set the Request To Send On.
+WRITEC TB   XBRE         Is the Transmitter Buffer Register Empty?
+       JNE  WRITEC       No, go back and wait until it is.
+       LDCR @>0002(R13),>08  Load the 8 bits of the calling code's workspace
+*                            R1 into the Transmitter Buffer Register.
+       SBZ  RTSON        Reset the Request To Send On.
+       BL   @LITEOF      Turn off the RS232 LED.
+       RTWP              Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* Get a character from the modem and store it in the buffer.
+CHUART DATA RSREG,$+>0002
+       MOVB @RDENB,@RDENB  Is the modem read enabled?
+       JNE  CHUAR3         No, skip it.
+       BL   @LITEON        Turn on the RS232 LED.
+       AI   R12,>0040      Select port 1.
+       TB   RBRL           Is the Receive Buffer Register Loaded?
+       JNE  CHUAR2         No, skip it.
+       STCR *R7+,>08       Get the 8 bits into the address R7 points to, then
+*                          increment R7 by 1.  R7 points into the modem buffer.
+       SBZ  RIENB          Reset the Receiver Interrupt Enable.
+       CI   R7,BUF+BUFLEN  Is the buffer at R7 full?
+       JLT  CHUAR1         Less than full, skip it.
+       AI   R7,-BUFLEN     Bring the buffer back to its front.
+CHUAR1 INC  R5             Increment the number of characters in the buffer.
+CHUAR2 BL   @LITEOF        Turn off the RS232 LED.
+CHUAR3 RTWP                Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* STRI calls the Buffer Manager to store characters in the buffer.
+BUFMAN MOV  R11,@RSREG+>001C  Save the return address in R14.
+       STWP R11          Get the old workspace pointer into the old R11.
+       MOV  R11,@RSREG+>001A  Save the old workspace pointer in R13.
+       LWPI RSREG        Load the local workspace registers.
+       DEC  R6           Decrement R6 (pointer to the current location of the
+*                        buffer) by 1.
+       CI   R6,BUF->0001 Did we just go backwards past the start of the buffer?
+       JGT  BUFMN1       No, skip to the insertion code.
+       AI   R6,BUFLEN    Otherwise, point the pointer into the buffer to the
+*                        end of the buffer.
+BUFMN1 MOVB @>0002(R13),*R6  Place the character in the MSBy of the calling
+*                            code's R1 into the buffer.
+       INC  R5           Increment R5 (the number of characters in the buffer)
+*                        by 1.
+       RTWP              Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* Screen handler dispatcher.  Determines if the character is a special control
+* code or a regular ASCII character.
+CHROUT DATA CHRREG,$+>0002
+       MOVB @>0002(R13),R1  Get the calling code's LSBy of R1 into the LSBy of
+*                           local R1.
+       MOV  @CURPOS,R0      Get the current cursor position into R0.
+* Comment out the next line for 40 column operation.
+       MOVB @BANK2,@BANKAD  Put the VDP into bank 2 for screen access.
+       ANDI R1,>7F00        Mask out the most significant bit of the character.
+       CB   R1,@B27         Is the character less than >1B?
+       JLE  CTRL            Yes, it is a control code, go process it.
+       B    @ASCII          Otherwise, it is a normal ASCII character.
+ 
+CTRL   SRL  R1,>07          Shift the character to the right by 7 bits...
+       MOV  @LOOKUP(R1),R2  ...to use as an offset into the control character
+pen the file.       CLR  @FIRST1       CLR  @XMDPAB+>0002ÿE  SOH3ÿ0ÿ  R7ÿ09ÿÿ
+       LI   R0,RECORD
+       LI   R1,HEDDAT
+       LI   R2,>0008
+       MOV  R2,R3
+OPNL1  C    *R0+,*R1+
+       JNE  DF128
+       DECT R2

@@ -1,0 +1,281 @@
+*------------------------------------------------------------------------------*
+* ANSWER displays the software info and connects the user.                     *
+*------------------------------------------------------------------------------*
+ANSWER LWPI STREGS       Load the local workspace registers.
+       BL   @OPEN        Initialize the RS232 device(s).
+       BL   @CRLF        Send a carriage return/linefeed to the modem/screen.
+       LI   R0,LOGIN1    Get ready to send the login message #1.
+       LI   R2,>0005     The length of this string is 5.
+       BL   @STRING      Send the string to the modem/screen.
+       LI   R0,SITE      Get ready to send the site #.
+       MOVB *R0+,R2      Get the length byte from R0 (pointing to the string)
+*                        into R2 then increment R0 by 1.
+       SRL  R2,>08       Move the length into the LSBy of R2.
+       BL   @STRING      Send the string to the modem/screen.
+       LI   R0,LOGIN2    Get ready to send the login message #2.
+       LI   R2,>0008     The length of this string is 8.
+       BL   @STRING      Send the string to the modem/screen.
+       LI   R0,NET       Get ready to send the net #.
+       MOVB *R0+,R2      Get the length byte from R0 (pointing to the string)
+*                        into R2 then increment R0 by 1.
+       SRL  R2,>08       Move the length into the LSBy of R2.
+       BL   @STRING      Send the string to the modem/screen.
+       BL   @CRLF        Send a carriage return/linefeed to the modem/screen.
+       LI   R0,LOGIN0    Get ready to send the last login message.
+       LI   R2,LOGINE-LOGIN0  Length of the last login message goes into R2.
+       BL   @STRING      Send the string to the modem/screen.
+       BL   @CRLF        Send a carriage return/linefeed to the modem/screen.
+       BL   @CRLF        Send a carriage return/linefeed to the modem/screen.
+       MOVB @ZERO,@SCRTCH  Clear the general purpose memory address to signify
+*                          success.
+       B    @BASIC       Return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* CAP capitalizes all lowercase characters in a string.                        *
+*------------------------------------------------------------------------------*
+CAP    LWPI STREGS       Load the local workspace registers. (String registers)
+       BL   @GET1ST      Get a string of maximum 255 characters from the first
+*                        parameter in the CALL LINK.
+       MOVB *R2+,R3      Put the length byte in R3 and increment R2 by 1.
+       JEQ  CAP4         Is it zero?  If so, go to the return address.
+       SRL  R3,>08       Move length to LSBy of R3.
+       LI   R4,>617A     The lower ('a') and upper ('z') values to check if the
+*                        character falls between them.
+       LI   R5,>2000     Value to subtract from byte if necessary.
+CAP1   CB   *R2,R4       Is the character less than the character 'a'?
+       JLT  CAP3         Yes, skip past the capitalization code.
+       SWPB R4           Put the 'z' character into the MSBy of R4.
+       CB   *R2,R4       Is the character greater than the character 'z'?
+       JGT  CAP2         Yes, skip past the capitalization code.
+       SB   R5,*R2       Subtract >20 from the character.
+CAP2   SWPB R4           Put the 'a' character back into the MSBy of R4.
+CAP3   INC  R2           Increment R2 (the pointer to the string) by 1.
+       DEC  R3           Decrement R3 (the length counter) by 1.
+       JNE  CAP1         Is R3 equal to zero?  If not, go back and continue
+*                        the processing of the string.
+       LI   R2,STRBUF    R2 points to the string to return.
+       BLWP @STRASG      Assign the string to the first parameter in the CALL
+*                        LINK.
+CAP4   B    @BASIC       Return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* CHARS loads DSK1.BBSCHARS and starts the BBS Timer interrupt.                *
+*------------------------------------------------------------------------------*
+CHARS  LWPI STREGS       Load the local workspace registers. (String registers)
+       CLR  R0           The PAB will be in VDP at location 0 in bank 0.
+       LI   R1,CHRPAB    Load R1 with the address of the PAB data.
+       LI   R2,>0018     The length of the PAB data is 24 bytes.
+       BLWP @VMBW        Write it to VDP RAM.  (location 0 in bank 0.)
+       AI   R0,>0009     Point R0 at the length of the path and filename.
+       MOV  R0,@>8356    Put it at >8356 for the call to DSRLNK.
+       BLWP @DSRLNK      Load the file DSK1.BBSCHARS.
+       DATA >0008        Device access is always followed by a >0008.  Low
+*                        level access (i.e. sector access) is always followed
+*                        by a >000A.
+ 
+       MOVB @ZERO,@VFLAG Make sure we set the video mode to 80 columns during
+*                        the first call to CLEAR!
+       LI   R0,ISR       Load R0 with the address of our interrupt address.
+       MOV  R0,@>83C4    Put that address into the interrupt vector address.
+       B    @BASIC       Return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* CLEAR initializes and clears a 40 or 80 column screen.                       *
+*------------------------------------------------------------------------------*
+CLEAR  MOV  R11,@KEYREG+>001C  Save the return address in R14.
+       STWP R11          Get the old workspace pointer into the old R11.
+       MOV  R11,@KEYREG+>001A  Save the old workspace pointer in R13.
+       LWPI KEYREG       Load the local workspace registers. (Key registers)
+       BL   @COL80       Put the screen into 80 column mode.
+ 
+       LI   R0,BUFFER    Clear the bottom-of-the-screen buffer. (80 characters)
+       LI   R1,SPACE     Fill it with space characters.
+CLEAR1 MOVB R1,*R0+                     .
+       CI   R0,BUFFER+>0050             .  (80 columns)
+*      CI   R0,BUFFER+>0028              .  (40 columns)
+       JLT  CLEAR1                      .
+ 
+       MOV  @TOPSCR,R0   Load R0 with the address of the top of the screen.
+       MOV  R0,@CURPOS   Also make it the current cursor location.
+       MOV  @ENDSCR,R2   Load R2 with the address of the bottom of the screen.
+       S    @TOPSCR,R2   Subtract the address of the top of the screen from the
+*                        address of the bottom of the screen so R2 will contain
+*                        the length of the screen.
+ 
+* Comment out the next line for 40 column operation.
+       MOVB @BANK2,@BANKAD  Select VDP bank 2.
+       BLWP @VSBW        Clear the first position of the screen. (VSBW will
+*                        switch us into bank 2.)
+       DEC  R2           One less screen position to clear.
+       JEQ  CLEAR3       If it is zero (slim chance) go to the return code.
+ 
+CLEAR2 MOVB R1,@VDPWD    Clear the next position of the screen. (VDP auto-
+*                        increments.)
+       DEC  R2           Decrement R2 by 1.
+       JNE  CLEAR2       Is it zero?  If not, continue the processing.
+ 
+* Comment out the next 3 lines and move the label for 40 column operation.
+CLEAR3 MOVB @ZERO,@BANKAD  Clear the VDP bank address select byte.
+       LI   R0,>0E00     Select VDP bank 0.
+       BLWP @VWTR        Make it so.
+       RTWP              Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* CPRINT sends an array of strings to the modem/screen.                        *
+*------------------------------------------------------------------------------*
+CPRINT LWPI STREGS       Load the local workspace registers. (String registers)
+*
+       CLR  R6
+       MOVB @SCRTCH,R3   Get the number of elements in the array from the
+*                        general purpose memory location.
+       JEQ  ENDCP        Is this an array with zero elements?  If so, jump to
+*                        the end of the routine.
+       SRL  R3,>08       Otherwise, move it into the LSBy of R3.
+       LI   R0,>0001     Set R0 to the 1st element in the array.
+ 
+CP1A   BL   @GETNST      Get the string from the CALL LINK.
+       MOVB *R2+,R4      Copy the length byte into the MSBy of R4 and increment
+*                        R2 to point at the remainder of the string.
+       JEQ  CP3          Does this string have a length of zero?  If so, jump
+*                        to process the next element.
+       SRL  R4,>08       Otherwise, move the length byte into the LSBy of R4.
+       CLR  R5           Clear the tilde flag.
+ 
+CP20   MOVB *R2+,R1      Move the character pointed to by R2 into the MSBy of
+*                        R1 and increment R2 by 1.
+       CB   R1,@TILDE    Is it a tilde?
+       JNE  CP2A         No, skip over the tilde code.
+       CI   R5,>0001     Is the tilde flag one?
+       JEQ  ENDCP        Yes, skip to the end of the code.
+       BL   @CRLF        Otherwise, send a carriage return/linefeed to the
+*                        modem/screen.
+       LI   R5,>0001     Set the tilde flag to one.
+       JMP  CP2B         Jump past the write the character out code.
+ 
+CP2A   BLWP @WR          Send the character to the modem/screen.
+       CLR  R5           Clear the tilde flag.
+CP2B   BLWP @CR          Fetch a character from the modem input buffer.
+       CB   R1,@B3       Is it a CTRL-C?
+       JEQ  ENDCP1       Yes, skip ahead and set the BREAK status.
+       CB   R1,@B14      Is it a CTRL-N?
+       JEQ  ENDCPN       Yes, skip ahead and set the NEXT status.
+       CB   R1,@XOFF     Is it the pause key? (CTRL-S?)
+       JNE  CP2C         No, skip over the pause code.
+       BL   @PPAUSF      Branch to the pause output subroutine.
+CP2C   DEC  R4           Decrement R4 (string length) by 1.
+       JNE  CP20         Still more to do?  If so, go back and keep processing.
+ 
+CP3    INC  R0           Increment the array element pointer by 1.
+       DEC  R3           Decrement the number of array elements left by 1.
+       JNE  CP1A         Are there none left?  If so, continue processing.
+       JMP  ENDCP        Jump over the status conditions.
+ 
+ENDCP1 LI   R6,>0200     Set status code >02, user interrupted with a CTRL-C.
+       BL   @CRLF        Send a carriage return/linefeed to the modem/screen.
+       JMP  ENDCP        Jump over the the other status conditions.
+ENDCPN LI   R6,>0100     Set status code >01, user skipped this batch of lines
+*                        with a CTRL-N.
+       BL   @CRLF        Send a carriage return/linefeed to the modem/screen.
+ENDCP  MOVB R6,@SCRTCH   Put the status code into the general purpose memory
+*                        location.
+       B    @BASIC       Return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* CRLF sends a carriage return and line feed to the modem/screen.              *
+*------------------------------------------------------------------------------*
+CRLF   MOV  R11,@KEYREG+>001C  Save the return address in R14.
+       STWP R11          Get the old workspace pointer into the old R11.
+       MOV  R11,@KEYREG+>001A  Save the old workspace pointer in R13.
+       LWPI KEYREG       Load the local workspace registers. (Key registers)
+       LI   R1,>0D0A     Load R1 with a carriage return and linefeed.
+       BLWP @WR          Send the carriage return to the modem/screen.
+       SWPB R1           Swap the bytes in R1 so the line feed is in the MSBy.
+       BLWP @WR          Send the linefeed to the modem/screen.
+       RTWP              Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* DIN moves the date into RAM.                                                 *
+*------------------------------------------------------------------------------*
+DIN    LWPI STREGS       Load the local workspace registers. (String registers)
+       LI   R2,DATE      R2 points to the DATE buffer.
+       MOVB @B15,*R2     Make 15 the maximum length to accept.
+       BL   @GETOTH      Get it from the 1st string parameter in the CALL LINK.
+       B    @BASIC       Return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* DOUT gets the date from RAM.                                                 *
+*------------------------------------------------------------------------------*
+DOUT   LWPI STREGS       Load the local workspace registers. (String registers)
+       LI   R2,DATE      R2 points to the DATE buffer.
+       MOVB @B15,*R2     The string will be 15 bytes long upon the return.
+       BL   @SNDOTH      Send the string to the 1st parameter in the CALL LINK.
+       B    @BASIC       Return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* EATSQ abolishes part of a string from a "~" (tilde) character to the end.    *
+*------------------------------------------------------------------------------*
+EATSQ  LWPI STREGS       Load the local workspace registers. (String registers)
+       BL   @GET1ST      Get a string with a maximum length of 255 from the
+*                        first parameter in the CALL LINK.
+EATSQQ MOVB *R2,R0       Get the length of the string into R0.
+       SRL  R0,>08       Move the length to the LSBy of R0.
+       A    R2,R0        Add the address of the string to R0. (R0 now points to
+*                        the end of the string.
+       INC  R0           Point R0 to one character past the end of the string.
+       MOVB @TILDE,*R0   Put a tilde in that position.
+       MOV  R2,R0        Copy the address of the string from R2 to R0.
+       INC  R0           Skip past the length byte.
+       MOV  R0,R3        Copy the address of the string from R0 to R3.
+ 
+EATSQ1 CB   *R0,@TILDE   Found a tilde?
+       JEQ  GOTSQ        Yes, go and process the rest of the string.
+       CB   *R0+,@B32    Is the character a space?  (Either way, increment R0
+*                        by 1.)
+       JEQ  EATSQ1       Yes, skip back and continue the searching.
+       MOV  R0,R3        Copy the current address within the string from R0 to
+*                        R3.
+       JMP  EATSQ1       Jump back and continue the processing.
+ 
+GOTSQ  MOV  R3,R0        Copy the address saved in R3 back into R0.
+       S    R2,R0        Subtract from that address the beginning address of
+*                        the string so R0 has new length of the string.
+       DEC  R0           Subtract one to skip back over the tilde.
+       SLA  R0,>08       Move the new length to the LSBy of R0.
+       MOVB R0,*R2       Copy the new length to the length byte of the string.
+       BL   @SNDOTH      Send the string back to the first parameter in the
+*                        CALL LINK.
+       B    @BASIC       Return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* GET reads one character from the modem/keyboard.  Returns if there is none   *
+*     received.                                                                *
+*------------------------------------------------------------------------------*
+GET    LWPI STREGS       Load the local workspace registers. (String registers)
+       BLWP @CR          Get a character from the modem/keyboard.  255 is
+*                        returned if no character is waiting.
+       MOVB R1,@SCRTCH   Place in in the general purpose memory location.
+       B    @BASIC       Return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* GET1 gets one character from the modem/keyboard.  Waits until one is         *
+*      received.                                                               *
+*------------------------------------------------------------------------------*
+GET1   LWPI STREGS       Load the local workspace registers. (String registers)
+GET1A  BLWP @CR          Get a character from the modem/keyboard if one is
+*                        waiting.
+       BL   @VALID       Is it an actual valid character?
+       JNE  GET1A        No, go back and keep checking.
+       MOVB R1,@SCRTCH   Otherwise, place it in the general purpose memory
+*                        location.
+       B    @BASIC       Return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* GET2 Gets one character from the modem/keyboard.  Waits for length of time.  *
+*------------------------------------------------------------------------------*
+GET2   LWPI STREGS       Load the local workspace registers. (String registers)
+       MOVB @SCRTCH,R0   Get the number of minutes until timeout from the
+*                        general purpose memory location.
+       SRL  R0,>08       Move the number of minutes to the LSBy of R0.
+       BL   @TIMCHR
+       MOVB R1,@SCRTCH   Place the received character in the general purpose
+   MOVB @REC#+1,R0       BL   *

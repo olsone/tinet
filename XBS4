@@ -1,0 +1,292 @@
+*------------------------------------------------------------------------------*
+TIMCHR CLR  @TIMER3      Reset the minute timer to zero.
+       CLR  @TIMER       Reset the interrupt timer to zero.
+       MOV  R11,R15      Save the return addr. since the next BL destroys it.
+TIM1   BLWP @CR          Get a character from the modem/keyboard.
+       C    @TIMER3,R0   Has x many minutes elapsed?
+       JGT  TIM2         Yes, go to the timeout routine.
+       BL   @VALID       Check to see if it is in the valid character range.
+       JNE  TIM1         It is not, continue waiting for a character.
+       B    *R15         Return to the calling code by the saved return addr.
+TIM2   MOVB @FF,R1       Set the timeout flag.
+       RT                Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* backspace processing for STRI
+STBS   DEC  R0           Decrement R0, point to the previous character.
+       CLR  R1           Make sure the LSBy of R1 is zero.
+       MOVB *R0,R1       Get the character into the MSBy of R1.
+       CB   R1,@CARET    Was the character a caret?
+       JNE  STBS1        No, don't worry about it.
+       LI   R1,'*'*256+>0007  Load R0 with the code for an asterisk and a bell.
+       BLWP @WR          Send the asterisk to the modem/screen.
+       SWPB R1           Swap the bytes of R1 so that the bell is in the MSBy.
+       BLWP @WR          Send the bell to the modem/screen.
+       LI   R1,'^ '      Load R1 with a caret.
+       BLWP @WR          Then send it to the modem/screen so that special
+*                        character mode gets cancelled.
+       JMP  OKBS         Jump to the destructive backspace code.
+ 
+STBS1  MOVB @SPLCHR,@SPLCHR  Are we in special character mode?
+       JEQ  OKBS         No, don't worry about it.
+       CI   R1,'A'*256   Compare the special character to an >41
+       JLT  OKBS         Anything less than that is OK to backspace over.
+       CI   R1,']'*256   Compare the special character to an >5D.
+       JGT  OKBS         Anything greater than that is OK to backspace over.
+       CI   R1,'H'*256   Compare the special character to an >48
+       JLT  NOBS         Anything between >41 and >47 is NOT OK!
+       CI   R1,'L'*256   Compare the special character to an >4C.
+       JGT  NOBS         Anything between >4D and >5D is NOT OK!
+       JNE  STBS1A       If it isn't an >4C, then skip this.
+       LI   R1,'I'*256   If it was an >4C, make it now an >49.
+ 
+STBS1A AI   R1,->4000    Convert it into its "real" special character form.
+       MOV  R1,R4        Save the original character in the MSBy of R4.
+       SWPB R4           Move it to the LSBy of R4.
+       ANDI R1,>0100     Turn off all bits of the character except the LSB.
+       MOVB R1,R1        Was that bit reset? (off)
+       JNE  WASONE       No, it was on, process it.
+       INCT R4           Increment the character by 2.
+WASONE DEC  R4           Decrement the character by 1.
+       MOV  R4,R1        Move the character back into R1.
+       SWPB R1           Move it to the MSBy of R1.
+       BLWP @WR          Send the character to the modem/screen.
+       LI   R1,>0700     Load R1 with a bell code.
+       BLWP @WR          Send the bell to the modem/screen.
+       RT                Return to the calling code.
+ 
+OKBS   LI   R1,>0820     Load R1 with a backspace and a regular space.
+       BLWP @WR          Send the backspace to the modem/screen.
+       SWPB R1           Swap the bytes of R1 so that the regular space is in
+*                        the MSBy.
+       BLWP @WR          Send the regular space to the modem/screen.
+       SWPB R1           Swap the bytes of R1 so that the backspace is once
+*                        again in the MSBy.
+       BLWP @WR          Send the backspace to the modem/screen.
+NOBS   RT                Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+PPAUSF BLWP @CR          Check the buffer for characters.
+       CI   R1,>0100     Compare the character to a code >01.
+       JL   PPAUSF       If it is less than that, then keep pausing.
+       CI   R1,>7E00     Compare the character to a code >7E.
+       JH   PPAUSF       If it is greater than that, then keep pausing.
+       CI   R1,>1300     Is it an XOFF (CTRL-S) character?
+       JEQ  PPAUSF       Yes, keep pausing.
+       RT                Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+VALID  CB   R1,@ZERO     Is the character equal to code zero?
+       JEQ  NOTVL        Yes, it is not to be accepted.
+       CB   R1,@B125     Is the character greater than code 125?
+       JH   NOTVL        Yes, it is not to be accepted.
+       CB   @ZERO,@ZERO  Otherwise, create a condition that will be true.
+       RT                Return to the calling code.
+ 
+NOTVL  CB   @ZERO,@ONE   Create a condition that will not be true.
+       RT                Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+STRING MOV  R2,R2        Is the length zero?
+       JEQ  RTS          Yes, skip to the return address.
+ 
+STRNG1 MOVB *R0+,R1      Get the character from R0 into R1 and then increment
+*                        R0 by 1.
+       BLWP @WR          Send character to the modem/screen.
+       BLWP @CHUART      Scan the modem/keyboard for incoming characters.
+       DEC  R2           Decrement R2 by 1.
+       JNE  STRNG1       Jump back into the processing.
+ 
+RTS    RT                Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+BIAS2  LI   R0,ACCESS    Point R0 at the access levels.
+BIAS2A SB   @B48,*R0+    Subtract >30 from each character to get a correct
+*                        numberical value.
+       CI   R0,ACCESS+>000A  Are we at the end of the access levels?
+       JLT  BIAS2A       No, go back and continue processing.
+       RT                Otherwise, return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* Turn on the RS232 LED.
+LITEON LI   R12,>1300    Select the RS232 CRU base.
+       SBO  LED1         Turn on the TI and CorComp LED.
+       SBZ  LED2         Turn on the MYARC LED.
+       RT                Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* Turn off the RS232 LED.
+LITEOF LI   R12,>1300    Select the RS232 CRU base.
+       SBZ  LED1         Turn off the TI and CorComp LED.
+       SBO  LED2         Turn off the MYARC LED.
+       RT                Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* Sets 40 or 80 column mode and the screen colors.
+COL80  MOVB @VFLAG,@VFLAG  Did we do this routine already?  (Is the flag set?)
+       JNE  COL80A       Yes, skip to the return code.
+       MOVB @FF,@VFLAG   Otherwise, signify that we are doing this routine.
+       LI   R0,>F001     40 column mode.
+       MOVB R0,@>83D4    Put the contents of VDP register 1 at >83D4 so that
+*                        keyscan routine won't garble it all up.
+       SWPB R0           Make R0 correct for the VWTR call.
+       BLWP @VWTR        Make it so.
+* Comment out the next 4 lines for 40 column operation.
+       LI   R0,>0004     80 column mode.
+       BLWP @VWTR        Make it so.
+       LI   R0,>0221     Screen base at >0000 in bank 2 of the 9958 VDP.
+       BLWP @VWTR        Make it so.
+*       LI   R0,>020E     Screen base at >3800 in the VDP.  (40 columns)
+*       BLWP @VWTR        Make it so.
+       LI   R0,>0007     LSBy of R0 is to set VDP register 7. (colors!)
+       MOVB @SCOLOR,R0   Get the color byte.
+       SWPB R0           Make R0 correct for the VWTR call.
+       BLWP @VWTR        Make it so.
+       LI   R1,>0050     80 columns is the length of the lines we will have...
+*       LI   R1,>0028     40 columns is the length of the lines we will have...
+       MOV  R1,@LINLEN   ...so put it in the LINLEN variable.
+       MOVB @ONE,@RSREG+>0015
+COL80A RT                Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* Special screen control code handlers.
+*------------------------------------------------------------------------------*
+* Bell!
+BEL    LI   R3,>1000     Length of sound in R3.
+       LI   R2,>860D     Sound generator code in R2.
+       MOVB R2,@>8400    Put MSBy of sound generator into the sound register.
+       SWPB R2           Swap the bytes of R2.
+       MOVB R2,@>8400    Put LSBy of sound generator into the sound register.
+       LI   R2,>909F     Otherwise load R2 with the volume code for the highest
+*                        volume and the lowest volume (off).
+       MOVB R2,@>8400
+       SWPB R2           Put the lowest volume (off) in the MSBy of R2.
+BELDY  DEC  R3           Decrement sound length in R3 by 1.
+       JNE  BELDY        Zero yet?  If not, keep sounding off.
+       MOVB R2,@>8400    Turn off the sound we have been making.
+       JMP  RT1          Then go to the return code.
+ 
+*------------------------------------------------------------------------------*
+* Backspace.
+BS     C    R0,@TOPSCR   Are we at the top of the screen?
+       JLE  RT1          Yes, forget about the backspace.
+       DEC  R0           Otherwise, move the cursor back one character.
+       JMP  RT1          Then go to the return code.
+ 
+*------------------------------------------------------------------------------*
+* Line feed.
+LF     BLWP @VSBW        Show the character under the cursor.
+       A    @LINLEN,R0   Add the line length (80) to the current screen
+*                        location.
+       C    R0,@ENDSCR   Are we at the bottom of the screen?
+       JLT  RT1          No, don't worry about anything.
+       BL   @SCROLL      Otherwise, scroll the screen up one line.
+       LI   R10,SPACE    Put a space in the saved character under the cursor.
+       JMP  RETURN       Then go to the return code.
+ 
+*------------------------------------------------------------------------------*
+* Clear screen.
+FFEED  BL   @CLEAR       Clear the 80 by 24 screen.
+       MOV  @TOPSCR,R0   Reset the current screen location to the top of the
+*                        screen.
+       LI   R10,SPACE    Put a space in the saved character under the cursor.
+       JMP  RETURN       Then go to the non-saving return code.
+ 
+*------------------------------------------------------------------------------*
+* Carriage return.
+CRET   S    @TOPSCR,R0   Subtract out any screen modifiers we may have.
+       MOV  R0,R1        Move it to R1.
+       CLR  R0           Clear R0 for the divide.
+       DIV  @LINLEN,R0   Divide by the line length.
+       MPY  @LINLEN,R0   Then multiply it by the line length.  (This has the
+*                        effect of throwing out the remainder and giving us
+*                        the address of the beginning of the line.)
+       MOV  R1,R0        Put the result back into R0.
+       A    @TOPSCR,R0   Add back in any screen modifiers we may have.
+ 
+*------------------------------------------------------------------------------*
+RT1    BLWP @VSBR        Read the character under the cursor.
+       MOVB R1,R10       Save it in R10.
+RETURN LI   R1,>7E00     Cursor char >1E plus >60 BASIC bias.
+       BLWP @VSBW        Place it upon the screen.
+       MOV  R0,@CURPOS   Save the current screen location in a variable.
+* Comment out the next 3 lines for 40 column operation.
+       MOVB @ZERO,@BANKAD  Zero the VDP bank address selector.
+       LI   R0,>0E00     Select VDP bank 0.
+       BLWP @VWTR        Make it so.
+       RTWP              Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* Handles regular ASCII characters.
+ASCII  AB   @B96,R1      Add in the BASIC bias.
+       BLWP @VSBW        Send it out to the screen.
+       INC  R0           Move the current screen location forward by 1.
+       C    @ENDSCR,R0   Are we at the bottom of the screen?
+       JNE  RT1          No, skip to the return code.
+       BL   @SCROLL      Otherwise, scroll the screen up one line.
+       LI   R10,SPACE    Put a space in the saved character under the cursor.
+       JMP  RETURN       Then go to the non-saving return code.
+ 
+*------------------------------------------------------------------------------*
+* Shows saved character that was under the cursor.
+SHOW   MOVB R10,R1       Get the saved character under the cursor into the
+*                        MSBy of R1.
+       BLWP @VSBW        Send it out to the screen.
+       RT                Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* Scroll screen up one line.
+SCROLL S    @LINLEN,R0   Point R0 at the previous line.
+       MOV  R0,@CURPOS   Save it in CURPOS.
+       MOV  @TOPSCR,R0   Put the top of the screen in R0.
+       A    @LINLEN,R0   Then point R0 at the second line.
+       LI   R1,BUFFER    Point R1 to a buffer of LINLEN characters.
+       MOV  @LINLEN,R2   Get the current line length into R2.
+SCRLP  BLWP @VMBR        Read the current line.
+       BLWP @CHUART      Check the modem for incoming characters.
+       S    @LINLEN,R0   Point to the previous line...
+       BLWP @VMBW        ...and write it out.
+       A    @LINLEN,R0   Skip the current line up
+       A    @LINLEN,R0   by 2.
+       C    R0,@ENDSCR   Are we at the bottom of the screen yet?
+       JLT  SCRLP        No, keep moving lines up.
+       S    @LINLEN,R0   Otherwise, point at the bottom line of the screen.
+       LI   R1,SPACE     Write spaces to all the positions of the bottom line.
+SCRLP2 BLWP @VSBW                            .
+       INC  R0                               .
+       DEC  R2                               .
+       JGT  SCRLP2                           .
+       MOV  @CURPOS,R0   Get the current cursor position back into R0.
+       RT                Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* Routines to get or send a string to the parameters in the CALL LINK statement
+GET1ST CLR  R0          No array.
+ 
+GETNST LI   R1,>0001    1st argument.
+       LI   R2,STRBUF   Buffer to put the string into.
+       MOVB @FF,*R2     The maximum string length is 255.
+ 
+GETO1  BLWP @STRREF     Get the string from the CALL LINK.
+       RT               Return to the calling code.
+ 
+GETOTH CLR  R0          No array.
+       LI   R1,>0001    1st argument.
+       JMP  GETO1       Jump to the common code.
+ 
+SNDOTH CLR  R0           No array.
+       LI   R1,>0001     1st argument.
+       BLWP @STRASG      Assign the string to the CALL LINK.
+       RT                Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* Interrupt service routine.
+ISR    MOVB @STATUS,@S3  Save the status byte so we don't alter it.
+       INC  @TIMER       Increment the interrupt timer by 1.
+       SETO @>83D6       Keep the screen from blanking out.
+       MOVB @S3,@STATUS  Restore the saved status byte.
+       RT                Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* Return to BASIC.
+BASIC  LWPI GPLWS        Load the GPL workspace registers.

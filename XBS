@@ -1,0 +1,277 @@
+* TI-Net (C) 1985,1986 Erik Olson
+*Version 3.3  18-Nov-85
+*Version 3.4  18-Dec-85, 06-Jan-85
+*Version 3.7  04-Mar-86
+*Version 3.8  24-Mar-86
+* TI-Net (C) 1989,1990 Jesse Slicer
+*Version 3.95 25-Mar-89, 17-Feb-90, 08-Aug-91
+ 
+       IDT  'XBS'
+ 
+* Program Names/Definitions
+       DEF  ANSWER,CAP,CLEAR,CHARS
+       DEF  CPRINT,CRLF,DIN,DOUT,EATSQ
+       DEF  GET,GET1,GET2,LDA,LDB,OPEN
+       DEF  PUSH,STA,STB,STRI,STRO,USER
+       DEF  YESNO,XMODEM
+ 
+* Extended Basic utility equates
+NUMASG EQU  >2008        NUMeric ASsiGnment.
+NUMREF EQU  >200C        NUMeric REFerence.
+STRASG EQU  >2010        STRing ASsiGnment.
+STRREF EQU  >2014        STRing REFerence.
+XMLLNK EQU  >2018        Console conversion routines.
+FAC    EQU  >834A        Floating point ACcumulator.
+GPLWS  EQU  >83E0        GPL Workspace Registers.
+STATUS EQU  >837C        GPL STATUS byte.
+KEYBD  EQU  >8374        KEYBoarD access code.
+KEYVAL EQU  >8375        ASCII KEY VALue of last key pressed.
+VDPRD  EQU  >8800        VDP Read Data register.
+VDPWD  EQU  >8C00        VDP Write Data register.
+VDPWA  EQU  >8C02        VDP Write Address register.
+SCAN   EQU  >000E        Console keyboard scan.
+CIF    EQU  >0020        Convert Integer to Floating point.
+CFI    EQU  >12B8        Convert Floating point to Integer.
+ 
+* AORG so we know where next is
+       AORG >24F4
+ 
+* Site, Net, and current Date
+SITE#  DATA 1
+NET#   DATA 990
+       DATA DATE
+ 
+* AORG so we know where all this data is
+       AORG >2500
+ 
+* Program labels, data, etc.
+SCRTCH BYTE >00          General purpose       9472
+BPS    BYTE >01          Baud code             9473
+LENGTH BYTE >FF          Maximum input length  9474
+       BYTE >00                                9475
+CASE   BYTE >00          Case selector flag    9476
+       BYTE >00                                9477
+ALPHA  BYTE >00          Numeric/alpha flag    9478
+       BYTE >00                                9479
+ECHO   BYTE >00          Echo characters flag  9480
+MDEFLT BYTE >00          Modem connected flag  9481
+WRENB  BYTE >00          Modem write flag      9482
+RDENB  BYTE >00          Modem read flag       9483
+ACCESS BSS  >000A        Access levels         9484
+SCOLOR BYTE >F4          Screen (BBS) color    9494
+TCOLOR BYTE >CF          Terminal mode color   9495
+WWRAP  BYTE >00          Word wrap on flag     9496
+SPLCHR BYTE >00          Spl. char mode flag   9497
+       BYTE >00          Number of messages    9498
+       BYTE >00          unused                9499
+CDET   BYTE >00          Use CD flag           9500
+       BYTE >00          New user flag         9501
+LMSG   BYTE >00          1st message number    9502
+HMSG   BYTE >00          Last message number   9503
+USERNO DATA >0000        User number           9504
+TIME   DATA 99                                 9506
+CREDIT DATA >0000        Download credit       9508
+HBS    BSS  >000A                              9510
+MC     DATA >0000        Mail credit           9520
+       DATA >0000        Number of calls       9522
+TK     BYTE >00          Use timeout flag      9524
+FLAG   BYTE >00          BASIC return flag     9525
+TIMER  DATA >0000        Interrupt timer       9526
+TIMER1 DATA >0000        No key pressed timer  9528
+TIMER2 DATA >0000        Timer for each minute 9530
+TIMER3 DATA >0000                              9532
+ 
+DATE   BYTE >0F                                9534
+       TEXT '?              '
+       BYTE 91,62,>FF,>FF
+SITE   BYTE >01
+       TEXT '1    '
+NET    BYTE >03
+       TEXT '990  '
+YESTXT BYTE >03
+       TEXT 'Yes  '                            9567
+NOTXT  BYTE >02
+       TEXT 'No   '                            9573
+YNSTR  TEXT '(Y/N)'
+M38    TEXT '^MJ^------WHAM! Sysop is here!------^MJ^'  9583
+M39    TEXT '^MJ^------POOF! Sysop is gone!------^MJ^'  9623
+       EVEN
+ 
+BUF    BSS  >0050        (80 columns)
+*BUF    BSS  >0028        (40 columns)
+BUFFER BSS  >0050        (80 columns)
+*BUFFER BSS  >0028        (40 columns)
+STRBUF BSS  >0100
+USRNAM BSS  >002A
+ 
+* Various program register workspaces.
+STREGS BSS  >0020        String registers.
+DREGS
+KEYREG BSS  >0020        DSRLNK and key registers.
+RSREG  BSS  >0020        RS232 registers.
+CREG   BSS  >0020        Read character registers.
+WREG   BSS  >0020        Write character registers.
+VDPWS  BSS  >0020        Video registers.
+ 
+HANGK  BYTE 176          Hang user up key value.
+CHATK  BYTE 177          Chat toggle key value.
+AXESS  BYTE 178          Access change key value.
+TIMEK  BYTE 179          Time change key value.
+*TERMK  BYTE 181          Terminal mode toggle key value.
+STATK  BYTE 180          Status line key value.
+BREAKP BYTE >02          BREAK key value.
+B3     BYTE >03          CTRL-C key value.
+BACKSP BYTE >08          Backspace key value.
+ZERO
+TEN    BYTE >00
+B10    BYTE >0A
+ENTER  BYTE >0D          Enter key value.
+B14    BYTE >0E          CTRL-N key value.
+B15    BYTE >0F
+F3600  BYTE >0E
+XOFF   BYTE >13          CTRL-S (XOff) key value.
+B20    BYTE >14
+B24    BYTE >18
+B27    BYTE >1B
+B31    BYTE >1F
+B32    BYTE >20
+B40    BYTE >28
+ONE    BYTE >01
+FXXX   BYTE >2A
+B48    BYTE >30
+B52    BYTE 52
+B57    BYTE 57
+B64    BYTE >40
+B65    BYTE >41
+B81    BYTE >51
+B91    BYTE 91
+CARET  BYTE 94           Special character mode key value.
+B96    BYTE >60
+B97    BYTE >61
+B122   BYTE 122
+B125   BYTE >7D
+TILDE  BYTE >7E
+B128   BYTE >80
+FF     BYTE >FF
+VFLAG  BYTE >00
+* Comment out the next two lines for 40 column operation.
+BANK2  BYTE >02          VDP bank 2 value.  (80 columns)
+BANKAD BYTE >00          VDP bank address selector.  (80 columns)
+       EVEN
+ 
+S1     DATA >0000        General purpose register save memory locations.
+S2     DATA >0000                      .
+S3     DATA >0000                      .
+S4     DATA >0000                      .
+S5     DATA >0000                      .
+ 
+TLIST  DATA 0,5,10,15,20,30,40,50,60,90  List of time (in minutes) codes.
+BAUDS  DATA >0000
+       DATA >04D0        300  bps
+       DATA >01A0        1200 bps
+       DATA >00D0        2400 bps
+ 
+CURPOS DATA >0000+SCROFS  Current location of the cursor on the screen.
+TOPSCR DATA >0000+SCROFS  Top of the screen.
+ENDSCR DATA >0780+SCROFS  Bottom of the screen.  (80 columns)
+*ENDSCR DATA >03C0+SCROFS  Bottom of the screen.  (40 columns)
+LINLEN DATA >0050        For an 80 column screen, an 80 column line.  (80 cols)
+*LINLEN DATA >0028        For a 40 column screen, a 40 column line.  (40 cols)
+ 
+* Lookup table for control characters between 0 and 27
+LOOKUP DATA RT1,RT1,RT1,RT1,RT1,RT1,RT1,BEL
+       DATA BS,RT1,LF,RT1,FFEED,CRET,RT1,RT1,RT1
+       DATA RT1,RT1,RT1,RT1,RT1,RT1,RT1,RT1
+       DATA RT1,FFEED,RT1
+ 
+* Login identifier message
+LOGIN1 TEXT 'Site '
+LOGIN2 TEXT ' in Net '
+LOGIN0 TEXT 'TI-Net Vers 3.8 (C) 1986 Erik Olson'
+       DATA >0D0A
+       TEXT 'Vers 3.95 (C) 1991 Jesse Slicer'
+LOGINE EQU  $
+       EVEN
+ 
+* PAB for loading the BBSCHARS character set
+CHRPAB DATA >0500,>03F0,>0000,>0800,>000D
+       TEXT 'DSK1.BBSCHARS'
+       EVEN
+ 
+* Special XModem data
+HEDDAT BYTE >07
+       TEXT 'TIFILES'
+TEMPR# BYTE >00
+HEX20  BYTE ' '
+HEXAA  BYTE >AA
+PERIOD BYTE '.'
+       EVEN
+CRCFLG DATA >0000        Flag if CRC is used or not.
+INTSAV DATA >0000        Used to save the old interrupt vector.
+NAMBUF BSS  >0006        'SINCE WE KNOW WERE USING "DSKn."
+XMDPAB DATA >0000
+       DATA >0000        (NEED "SECTOR"+>0080)
+       DATA >8080
+REC#   DATA >0000
+       BYTE >00
+LEN1   BYTE >00
+       TEXT 'DSK'
+DRIVE# BYTE >00
+XMDLEN BYTE >00          'WILL BE TURNED INTO A PERIOD FOR DSR...
+XMDNAM TEXT '123456789 '
+SAVPAD BSS  >000A
+       EVEN
+CHRREG
+XREGS  BSS  >0020        XModem registers.
+OLDWP  DATA >0000        Saved workspace pointer.
+OLDPC  DATA >0000        Saved program counter.
+OLDST  DATA >0000        Saved status register.
+FIRST1 DATA >0000
+ 
+*      TEXT '0123456789ABCDEF'
+HEX    BYTE >90,>91,>92,>93,>94,>95,>96,>97,>98,>99
+       BYTE >A1,>A2,>A3,>A4,>A5,>A6
+*      TEXT '  Record # >xxxx'
+RSTR   BYTE >0080,>0080,>B2,>C5,>C3,>CF,>D2,>C4
+       BYTE >0080,'#'+96,>0080,'>'+96
+RSTR#  DATA >00,>00
+       BYTE >0080,>0080
+       BYTE 'R'+96,'e'+96,'t'+96,'r'+96,'y'+96,>0080,'#'+96
+RSTRR# BYTE >00
+       BYTE >0080,>0080
+       EVEN
+ 
+* Simple equates
+ADDINF EQU  >8300        Additional information block pointer.
+SEC#   EQU  >8302        Starting sector number of a file.
+FNAME  EQU  >0020        Filename buffer.
+NAMLEN EQU  >002A
+SECTOR EQU  >0040
+SEC#10 EQU  10*60
+SEC#12 EQU  12*60
+SOH    EQU  >0001        Start of header.
+EOT    EQU  >0004        End of transmission.
+ACK    EQU  >0006        Acknowledgement.
+CAN    EQU  >0018        Cancel.
+NAK    EQU  >0015        Negative acknowledgement.
+CRC    EQU  'C'          CRC acknowledgement.
+OPENXX EQU  >0000        File open code.
+WRITE  EQU  >0003        File write code.
+CLOSE  EQU  >0001        File close code.
+DELETE EQU  >0007        File delete code.
+BUFLEN EQU  >0050        Length of the modem input buffer.
+SCROFS EQU  >0000        Screen offset for video functions.  (80 columns)
+*SCROFS EQU  >3800        Screen offset for video functions.  (40 columns)
+LED1   EQU  >07          Bit number for the TI/CorComp RS232 LED.
+LED2   EQU  >03          Bit number for the MYARC RS232 LED.
+RTSON  EQU  >10          Bit number for Request To Send On.
+XBRE   EQU  >16          Bit number for Transmit Buffer Register Empty.
+RBRL   EQU  >15          Bit number for Receive Buffer Loaded.
+RIENB  EQU  >12          Bit number for Receiver Interrupt Enable.
+SPACE  EQU  >8000        Code for space (>20) plus the BASIC offset >60.
+ 
+* Copy the rest of the source files
+       COPY "WDS1.BBS.SRC.XBS1"
+       COPY "WDS1.BBS.SRC.XBS2"
+       COPY "WDS1.BBS.SRC.XBS3"
+       COPY "WDS1.BBS.SRC.XBS4"

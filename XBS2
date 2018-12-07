@@ -1,0 +1,324 @@
+*------------------------------------------------------------------------------*
+* LDA gets the access levels from RAM.                                         *
+*------------------------------------------------------------------------------*
+LDA    LWPI STREGS       Load the local workspace registers. (String registers)
+       MOVB @RDENB,@SCRTCH  Save the modem read enable flag in the general
+*                           purpose memory location.
+       LI   R0,ACCESS    Load R0 with the address of the access levels.
+BIAS   AB   @B48,*R0+    Add >30 to the current character so that it is in
+*                        ASCII, then increment R0 by 1.
+       CI   R0,ACCESS+>000A  Are we at the end of the access levels?
+       JLT  BIAS         No, continue the processing of them.
+       LI   R2,RDENB     Load R2 with the modem read enable flag.  This is used
+*                        for storing the length byte because it comes just
+*                        before the access levels in the memory.
+       MOVB @B10,*R2     The access levels are 10 bytes long, so that is what
+*                        we'll send.
+       BL   @SNDOTH      Send the string to the 1st parameter in the CALL LINK.
+       MOVB @SCRTCH,@RDENB  Restore the modem read enable flag from the general
+*                           purpose memory location.
+       BL   @BIAS2       Make the access levels correct ASCII for BASIC.
+       B    @BASIC       Return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* LDB gets the high message numbers from RAM.                                  *
+*------------------------------------------------------------------------------*
+LDB    LWPI STREGS       Load the local workspace registers. (String registers)
+       LI   R0,HBS       Point R0 at the beginning of 10 high bulletin numbers.
+       LI   R1,STRBUF+>0001 Point R1 to the fist character in the string buffer
+*                           past the length byte.
+LDB1   MOVB *R0+,R3      Move the current high bulletin number into the MSBy of
+*                        R3, then increment R0 (the pointer) by 1.
+       SRL  R3,>08       Move it into the LSBy of R3.
+       CLR  R2           R2 needs to be zero for a divide.
+       DIV  @TEN,R2      Divide the bulletin number by 10.
+       SLA  R2,>08       Put both the quotient and remainder in the MSBys of
+       SLA  R3,>08       R2 and R3, respectively.
+       AI   R2,>3000     Mask each number up by >30 such that it is a
+       AI   R3,>3000     displayable ASCII character. (to send to BASIC.)
+       MOVB R2,*R1+      Send the quotient to the string buffer, then increment
+*                        R1 (the pointer into the buffer) by 1.
+       MOVB R3,*R1+      Send the remainder to the string buffer, then
+*                        increment R1 (the pointer into the buffer) by 1.
+       CI   R1,STRBUF+>0014  Are we done filling the buffer?
+       JLT  LDB1         No, keep processing, otherwise send it back.
+ 
+       LI   R2,STRBUF    R2 points at the standard string buffer.
+       MOVB @B20,*R2     20 is the length of the string we're sending back.
+       BL   @SNDOTH      Send the string to the 1st parameter in the CALL LINK.
+       B    @BASIC       Return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* OPEN initializes RS232/1 port for 8-N-1 and the selected bps rate.           *
+*------------------------------------------------------------------------------*
+OPEN   MOV  R11,@RSREG+>001C  Save the return address in R14.
+       STWP R11          Get the old workspace pointer into the old R11.
+       MOV  R11,@RSREG+>001A  Save the old workspace pointer in R13.
+       LWPI RSREG        Load the local workspace registers. (RS232 registers)
+       BL   @LITEON      Turn on the RS232 LED.
+       SBO  >3F          Reset RS232 port 1.
+       SBO  >5F          Reset RS232 port 2.
+       AI   R12,>0040    Select port 1 base address.
+       LI   R2,>8300     Load R2 with the code for 8-N-1.
+       LDCR R2,>08       Load the control bits into the CRU.
+       CLR  R2           Clear all bits of R2 so we don't have to worry about
+*                        stray values in its LSBy.
+       MOVB @BPS,R2      Get the bps code into the MSBy of R2.
+       SRL  R2,>07       Move it into the LSBy of R2 and multiply it by 2.
+       SBZ  >0D          Enable the Load Data Rate Registers.
+       LDCR @BAUDS(R2),>0C  Load the Receive and Transmit Data Rate Registers.
+       BL   @LITEOF      Turn off the RS232 LED.
+ 
+       CLR  R5           Initialize the Buffer Manager. (No characters waiting)
+       LI   R6,BUF       R6 points to the beginning of the buffer.
+       MOV  R6,R7
+       CLR  @CHRREG+>0010
+       MOVB @B32,@CHRREG+>0014
+       RTWP              Return to the calling code.
+ 
+*------------------------------------------------------------------------------*
+* PUSH sends one character to the modem/keyboard.                              *
+*------------------------------------------------------------------------------*
+PUSH   LWPI STREGS       Load the local workspace registers. (String registers)
+       MOVB @SCRTCH,R1   Get the character from the general purpose memory
+*                        location into R1.
+       BLWP @WR          Send the character to the modem/screen.
+       B    @BASIC       Return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* STA puts the access levels into RAM.                                         *
+*------------------------------------------------------------------------------*
+STA    LWPI STREGS       Load the local workspace registers. (String registers)
+       LI   R2,RDENB     R2 points to the modem read enable flag.
+       MOVB *R2,@SCRTCH  Save the flag status in a temporary location.
+       MOVB @B10,*R2     The access levels are 10 bytes long, so that is the
+*                        maximum length we'll accept.
+       BL   @GETOTH      Get it from the 1st string parameter in the CALL LINK.
+       MOVB @SCRTCH,*R2  Restore the modem read enable flag status.
+       BL   @BIAS2       Make the access levels correct ASCII for display.
+       B    @BASIC       Return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* STB stores the high message numbers for the user in RAM.                     *
+*------------------------------------------------------------------------------*
+STB    LWPI STREGS       Load the local workspace regsiters. (String registers)
+       LI   R2,STRBUF    R2 points to the standard string buffer.
+       MOVB @B20,*R2     The maximum length allowed will be 20 characters.
+       BL   @GETOTH      Get it from the 1st parameter in the CALL LINK.
+       LI   R0,STRBUF+>0001  Point R0 to the first byte past the length byte in
+*                            the string buffer.
+       LI   R3,HBS       Load R3 with the high bulletin memory area.
+STB1   MOVB *R0+,R1      Get the 10's digit from the buffer, then increment R0
+*                        (the pointer into the buffer) by 1.
+       SB   @B48,R1      Remove >30 from the value so that it is a decimal
+*                        number.
+       SRL  R1,>08       Move it to the LSBy of R1.
+       MPY  @TEN,R1      Multiply that value by 10.
+       SWPB R2           The actual number will be in the MSBy of R2, so get it
+*                        into R2's LSBy.
+       MOVB *R0+,R1      Get the 1's digit from the buffer.
+       SB   @B48,R1      Remove >30 from the value so that it is a decimal
+*                        number.
+       AB   R1,R2        Add this into the MSBy of R2.
+       MOVB R2,*R3+      Send this complete number to the high bulletin memory
+*                        area, then increment R3 (the pointer to the high
+*                        bulletin memory area.)
+       CI   R3,HBS+>000A  Have we reached the end of the high bulletin area?
+       JLT  STB1         No, continue processing high bulletins.
+       B    @BASIC       Otherwise, return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* STRI gets a string from the modem/keyboard.  Waits for a length of time.     *
+*------------------------------------------------------------------------------*
+STRI   LWPI STREGS       Load the local workspace registers. (String registers)
+       MOVB @ZERO,@STRBUF  Initialize STRBUF to have zero characters in it.
+       LI   R0,STRBUF+>0001  Point R0 to the beginning of STRBUF, skipping over
+*                            the length byte.
+STRI1  BLWP @CR          Get a character from the modem/keyboard.
+       ANDI R1,>7F00     Mask out the most significant bit of the character.
+       CB   R1,@B125     Is the character greater than code 125?
+       JGT  STRI1        Yes, discard it and go back for another one.
+       CB   R1,@B31      Is the character not a control code?
+       JGT  ADDON        Yes, go to the add-the-character-on routine.
+       CB   R1,@ENTER    Was this the ENTER code?
+       JEQ  ICRET        Yes, jump to the ENTER processing routine.
+       CB   R1,@BACKSP   Was this the BACKSPACE (CTRL-S) code?
+       JEQ  IBS          Yes, jump to the BACKSPACE processing routine.
+       JMP  STRI1        Not a valid code, continue the processing.
+ 
+ADDON  MOVB @LENGTH,R3   Get the maximum length allowed into the MSBy of R3.
+       SRL  R3,>08       Move it to the LSBy of R3.
+       AI   R3,STRBUF    Add in the address of STRBUF so that we are at the end
+*                        of the buffer.
+       C    R0,R3        Are we at the end of the input line?
+       JEQ  WRAPPY       Yes, go wrap the last word on the line.
+       CB   @ALPHA,@ZERO  Allow numeric characters only? (alpha flag set?)
+       JEQ  ADDON1       No, don't worry about it.
+       CB   R1,@B48      Otherwise, compare the character with '0'.
+       JLT  STRI1        Less then, skip it.  Go wait for another character.
+       CB   R1,@B57      Compate the character with '9'.
+       JGT  STRI1        Greater than, skip it.  Go wait for another character.
+ 
+ADDON1 MOVB R1,*R0+      Put the character into the string buffer, then
+*                        increment R0 (the pointer into the buffer) by 1.
+       BLWP @WR          Send the character to the modem/screen.
+       JMP  STRI1        Go back and wait for another character.
+ 
+ICRET  LI   R2,STRBUF    Load R2 with the address of the string buffer.
+       S    R2,R0        Subtract the address from R0 to get the right length.
+       DEC  R0           Decrement R0 by 1 to compensate for the length byte.
+       SLA  R0,>08       Move it into the LSBy of R0.
+       MOVB R0,@STRBUF   Put it at the string buffer length byte.
+ICR2   LI   R2,STRBUF    Point R2 at the string buffer.
+       BL   @CRLF        Send a carriage return/linefeed to the modem/screen.
+       B    @EATSQQ      Chop off the string at a tilde if one was entered.
+ 
+IBS    CI   R0,STRBUF+>0001  Are we at the beginning of the string?
+       JLE  STRI1        Yes, don't process the backspace.
+       BL   @STBS        Otherwise, go do the backspace process.
+       JMP  STRI1        Return to get another character.
+ 
+WRAPPY MOVB @WWRAP,@WWRAP  Is word wrap currently set to be on?
+       JEQ  STRI1        No, forget about it.
+       CB   R1,@B32      Is the last typed character a space?
+       JEQ  ICRET        Yes, jump to the ENTER processing routine.
+       MOV  R0,@S1       Save R0 because it will be altered.
+       MOV  R1,@S2       Save R1 because it will be altered.
+       DEC  R0           Decrement R0 by 1.
+LOOK   CB   *R0,@B32     Is the current character a space?
+       JEQ  FOUND        Yes, go to the word wrap code.
+       DEC  R0           Otherwise, decrement R0 by 1.
+       CI   R0,STRBUF    Have we reached the beginning of STRBUF?
+       JGT  LOOK         No, keep looking for a space.
+       MOV  @S1,R0       Otherwise, restore the original R0.
+       JMP  STRI1        No spaces found, don't do the word wrap.
+ 
+FOUND  MOV  R0,R2        Copy the current string position into R2.
+       DEC  R0           Have R0 point to the character before the space.
+       LI   R7,STRBUF    Load R7 with the address of the string buffer.
+       S    R7,R0        Subtract the address of the string buffer so that R0
+*                        will now contain the length of the string minus the
+*                        fragment.
+       SLA  R0,>08       Move the length to the MSBy of R0.
+       MOVB R0,@STRBUF   Put the length of the fragment at the string buffer.
+       MOV  @S2,R1       Retrieve the previously saved R1.
+       BL   @BUFMAN      Process the string into the buffer.
+       CLR  R0           Put zero in R0, initializing the the length of the
+*                        fragment.
+       MOV  @S1,R3       Move the saved R0 (pointer to the current character
+*                        in the whole string) into R3.
+       DEC  R3           Decrement R3 by 1 to point at the space before it.
+NUTHER MOVB *R3,R1       Move the text fragment from the current line into the
+*                        buffer for the next call to STRI.
+       DEC  R3           Decrement R3 (the pointer to the fragment) by 1.
+       BL   @BUFMAN      Put the character in the buffer
+       INC  R0           Increment R0 (the current length of the fragment) by
+*                        by 1.
+       LI   R1,>0800     Load the LSBy with a backspace code.
+       BLWP @WR          Then send it out to the modem/screen.
+       C    R3,R2        Are we back far enough yet? (the length of the
+*                        fragment)
+       JGT  NUTHER       Not yet, keep processing.
+       LI   R1,>2000     Otherwise, load R1 with the code for a space.
+NUTHO  BLWP @WR          Then write it out to the modem/screen for as many
+       DEC  R0           characters as the length of the last word fragment
+       JGT  NUTHO        was.
+       JMP  ICR2         Go to the second part of the ENTER processing routine.
+ 
+*------------------------------------------------------------------------------*
+* STRO sends a string to the modem/screen and checks for incoming characters.  *
+*------------------------------------------------------------------------------*
+STRO   LWPI STREGS       Load the local workspace registers. (String registers)
+       BL   @GET1ST      Get the 1st string parameter of CALL LINK of maximum
+*                        255 characters.
+       LI   R0,STRBUF+>0001  Skip over the length byte.
+       MOVB *R2,R2       Move the length byte into R2.
+       JEQ  STRO2        Is it zero?  If so, go to the return address.
+       SRL  R2,>08       Move the length to the LSBy of R2.
+STRO1  MOVB *R0+,R1      Get a byte of the string (as pointed to by R0) into
+*                        R1.  Then increment R0 by 1.
+       BLWP @WR          Send the character to the modem/screen.
+       BLWP @CHUART      Check the modem for characters and put them in the
+*                        buffer.
+       DEC  R2           Decrement R2 by 1.
+       JNE  STRO1        Is it zero?  If not, continue the processing.
+STRO2  B    @BASIC       Otherwise, return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* USER puts the access levels and the user in RAM.                             *
+*------------------------------------------------------------------------------*
+USER   LWPI STREGS       Load the local workspace registers. (String registers)
+       LI   R2,USRNAM    R2 points at the USRNAM buffer (of length 40).
+       MOVB @B40,*R2     40 is the maximum length we'll accept.
+       BL   @GETOTH      Get it from the 1st string parameter in the CALL LINK.
+       LI   R0,USRNAM+>0001  Skip over the length byte.
+ULOOP  AB   @B96,*R0+    Add in the BASIC Offset of >60.
+       CI   R0,USRNAM+>0029  Are we at the end of the string yet?
+       JLT  ULOOP        No, go back and continue the processing.
+       B    @BASIC       Otherwise, return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* YESNO displays a (Y/N)? prompt and waits for a "YyNn" key and writes the     *
+*       entire "Yes" or "No" string to the modem/screen.                       *
+*------------------------------------------------------------------------------*
+YESNO  LWPI STREGS       Load the local workspace registers. (String registers)
+       LI   R0,YNSTR     Put address of the (Y/N)? string in R0.
+       LI   R2,>0005     The length of it is 5.
+       BL   @STRING      Send the string out to the modem/screen.
+       MOVB @ZERO,@SCRTCH  Zero out the general purpose memory location to
+*                          signify a "no" response.
+YN1    BLWP @CR          Get a character from the modem/keyboard into R1.
+       SRL  R1,>08       Move it into the LSBy of R1.
+       CI   R1,>0060     Is it a lower case letter?
+       JLT  YN2          No, don't worry about it.
+       AI   R1,->0020    Otherwise subtract out >20 to make it upper case.
+YN2    CI   R1,'N'       'N' key?
+       JEQ  NO           Yes, display "No".
+       CI   R1,'Y'       'Y' key?
+       JNE  YN1          No, go back and wait for a correct response.
+       MOVB @ONE,@SCRTCH  Otherwise, put a 1 in the general purpose memory
+*                         location to signify a "yes" response.
+       LI   R0,YESTXT    Load R0 with the string "Yes".
+       JMP  NO1          Skip to the common code.
+NO     LI   R0,NOTXT     Load R0 with the string "No".
+NO1    MOVB *R0+,R2      Get the length byte into R2 and increment R0 by 1.
+       SRL  R2,>08       Move the length into the LSBy of R2.
+       BL   @STRING      Send the string to the modem/screen.
+       BL   @CRLF        Send a carriage return/linefeed to the modem/screen.
+       B    @BASIC       Return to BASIC.
+ 
+*------------------------------------------------------------------------------*
+* TERM enters the terminal mode.                                               *
+*------------------------------------------------------------------------------*
+*TERM   MOV  @WRENB,R12  Save the modem write enable status in R12.
+*       CLR  @WRENB      Disable modem write enable.
+*TR1    BLWP @GETKEY     Get a key from the keyboard.
+*       CB   R1,@TERMK   Is it the terminal toggle key?
+*       JEQ  ETERM       Yes, go and exit terminal mode.
+*       ANDI R1,>7F00    Strip the most significant bit off of the key value.
+*       BL   @VALID      Check to see if it is a valid character.
+*       JNE  TR2         If not, don't send it to the modem/screen.
+*       BLWP @WRITEA     Send the character to the modem.
+*TR2    LI   R0,>0007    Put the video reg. 7 in the LSBy of R0. (set colors.)
+*       MOVB @TCOLOR,R0  Get the terminal color into the MSBy of R0.
+*       SWPB R0          Swap the bytes in R0 so that VWTR can do its thing.
+*       BLWP @VWTR       Make it so.
+*       BLWP @CHUART     Check the modem for incoming characters.
+*       BLWP @READM      Check the buffer for characters.
+*       BL   @VALID      Check for valid characters.
+*       JNE  TR1         Not valid, jump back into processing.
+*       BLWP @CHROUT     Send the character to the screen...
+*       JMP  TR1         ...and jump back into processing.
+ 
+*ETERM  LI   R0,>0007    Put the video reg. 7 in the LSBy of R0. (set colors.)
+*       MOVB @SCOLOR,R0  Get the BBS color into the MSBy of R0.
+ ,* Now to get either the CRC or the checksum. 
+     LI   R0,SEC#10ÿ  R7ÿ09ÿÿ  
+    BL   @GETS1       JEQ  SOH3
+       MOV  R6,R6
+       JEQ  GOTCHK
+       MOVB R1,R0
+       BL   @CRCUPD
+ 
+       LI   R0,SEC#10
+       BL   @GETS1
